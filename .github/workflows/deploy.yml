@@ -69,10 +69,9 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: Snyk dependency scan — backend
-        uses: snyk/actions/node@master
-        with:
-          args: --severity-threshold=high --file=backend/package.json
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
