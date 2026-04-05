@@ -109,8 +109,7 @@ jobs:
          tags: |
           ghcr.io/shubhamkhodape/devflow-backend:${{ github.sha }}
           ghcr.io/shubhamkhodape/devflow-backend:latest
-          cache-from: type=gha
-          cache-to:   type=gha,mode=max
+         
 
       - name: Build & push frontend
         uses: docker/build-push-action@v5
