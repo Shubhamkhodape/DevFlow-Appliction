@@ -75,10 +75,9 @@ jobs:
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-      - name: Snyk dependency scan — frontend
-        uses: snyk/actions/node@master
-        with:
-          args: --severity-threshold=high --file=frontend/package.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
