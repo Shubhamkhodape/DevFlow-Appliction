@@ -1,0 +1,146 @@
+name: DevFlow CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY:     ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/devflow
+
+jobs:
+  # ── 1. Test ──────────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB:       devflow_test
+          POSTGRES_USER:     devflow_user
+          POSTGRES_PASSWORD: test_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install & test backend
+        working-directory: backend
+        env:
+          DB_HOST: localhost
+          DB_NAME: devflow_test
+          DB_USER: devflow_user
+          DB_PASSWORD: test_password
+          JWT_SECRET: test_secret
+        run: |
+          npm ci
+          npm test
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+  # ── 2. Security scan ─────────────────────────────────────────────────────────
+  security-scan:
+    name: Security scan
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Snyk dependency scan — backend
+        uses: snyk/actions/node@master
+        with:
+          args: --severity-threshold=high --file=backend/package.json
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Snyk dependency scan — frontend
+        uses: snyk/actions/node@master
+        with:
+          args: --severity-threshold=high --file=frontend/package.json
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # ── 3. Build & push Docker images ────────────────────────────────────────────
+  build-push:
+    name: Build & push
+    needs: security-scan
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-backend:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-backend:latest
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-frontend:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-frontend:latest
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+  # ── 4. Deploy to AKS ─────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to AKS
+    needs: build-push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/aks-set-context@v3
+        with:
+          resource-group: devflow-rg
+          cluster-name:   devflow-aks
+          creds:          ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Rolling update backend
+        run: |
+          kubectl set image deployment/devflow-backend \
+            backend=${{ env.IMAGE_PREFIX }}-backend:${{ github.sha }} \
+            -n devflow
+          kubectl rollout status deployment/devflow-backend -n devflow
+
+      - name: Rolling update frontend
+        run: |
+          kubectl set image deployment/devflow-frontend \
+            frontend=${{ env.IMAGE_PREFIX }}-frontend:${{ github.sha }} \
+            -n devflow
+          kubectl rollout status deployment/devflow-frontend -n devflow
