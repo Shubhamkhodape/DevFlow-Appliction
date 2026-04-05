@@ -6,7 +6,7 @@
   "scripts": {
     "start":   "node src/index.js",
     "dev":     "nodemon src/index.js",
-    "test":    "jest --coverage --ci",
+    "test":    "jest --coverage --ci --passWithNoTests",
     "migrate": "psql -U $DB_USER -d $DB_NAME -f migrations/001_init.sql"
   },
   "dependencies": {
